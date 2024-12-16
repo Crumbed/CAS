@@ -1,8 +1,10 @@
 
+mod lexer;
+
 use std::io;
 use io::Write;
 
-pub const VERSION: &'static str = "v0.0.2";
+pub const VERSION: &'static str = "v0.0.3";
 
 
 fn main() -> io::Result<()> {
@@ -19,6 +21,8 @@ fn main() -> io::Result<()> {
         if input == ".exit\n" { break 'main Ok(()); }
 
         println!("eq: {input}");
+        let tokens = lexer::tokenize(&input);
+        println!("tokens: {:#?}", tokens);
 
         input.clear();
     }
