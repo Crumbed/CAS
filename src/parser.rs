@@ -1,6 +1,7 @@
 
 
 use std::rc::Rc;
+use core::fmt::Debug;
 
 use crate::lexer;
 use crate::err;
@@ -8,16 +9,41 @@ use crate::err;
 use lexer::Token;
 
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypeKind {
     Integer,
     Float,
 }
 
+#[derive(Copy, Clone)]
+pub union Value {
+    pub i: i64,
+    pub f: f64,
+}
+
+impl From<f64> for Value {
+    fn from(value: f64) -> Self { Value { f: value } }
+}
+impl From<i64> for Value {
+    fn from(value: i64) -> Self { Value { i: value } }
+}
+
+impl Debug for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        return unsafe {
+            f.debug_struct("Value")
+                .field("i", &self.i)
+                .field("f", &self.f)
+                .finish()
+        };
+    }
+}
+
+
 #[derive(Debug, Clone)]
 pub enum AstNode {
     Identifier { id: String },
-    Literal { kind: TypeKind, data: String },
+    Literal { kind: TypeKind, data: Value },
 
     VarAssign { id_expr: Rc<AstNode>, assign: Rc<AstNode> },
     BinaryExpr { left: Rc<AstNode>, right: Rc<AstNode>, op: String },
@@ -157,7 +183,13 @@ impl Ast {
     fn parse_float(&mut self) -> AstNode {
         let mut value = if self.at() == &Dot {
             self.expect(Int("".into()), "Expected number after decimal point");
-            AstNode::Literal { kind: TypeKind::Float, data: format!("0.{}", self.at().to_string()) }
+            let at_str = self.at().to_string();
+            AstNode::Literal {
+                kind: TypeKind::Float,
+                data: (at_str.parse::<f64>().unwrap() 
+                    / 10usize.pow(at_str.len() as u32) as f64)
+                    .into()
+            }
         } else {
             self.parse_primary()
         };
@@ -167,21 +199,20 @@ impl Ast {
 
             if !self.next_is(Dot) { return value; }
             self.next();
-            data.push('.');
             *kind = TypeKind::Float;
+            unsafe { data.f = data.i as f64; }
 
-            if !self.next_is(Int("".into())) {
-                data.push('0');
-                return value;
-            }
-            data.push_str(&self.next().to_string());
+            if !self.next_is(Int("".into())) { return value; }
+            let nstr = self.next().to_string();
+            data.f = unsafe {data.f} + nstr.parse::<f64>().unwrap() 
+                / 10usize.pow(nstr.len() as u32) as f64;
         }
         return value;
     }
 
     fn parse_primary(&mut self) -> AstNode {
         match self.at().clone() {
-            Int(x) => AstNode::Literal { kind: TypeKind::Integer, data: x },
+            Int(x) => AstNode::Literal { kind: TypeKind::Integer, data: x.parse::<i64>().unwrap().into() },
             Ident(name) => AstNode::Identifier { id: name },
             Paren(true) => self.parse_paren(),
 

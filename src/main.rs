@@ -1,11 +1,12 @@
 
 mod lexer;
 mod parser;
+mod interpreter;
 
 use std::io;
 use io::Write;
 
-pub const VERSION: &'static str = "v0.0.4";
+pub const VERSION: &'static str = "v0.0.5";
 
 #[macro_export]
 macro_rules! err {
