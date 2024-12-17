@@ -6,7 +6,7 @@ mod interpreter;
 use std::io;
 use io::Write;
 
-pub const VERSION: &'static str = "v0.0.5";
+pub const VERSION: &'static str = "v0.0.6";
 
 #[macro_export]
 macro_rules! err {
@@ -41,6 +41,7 @@ fn main() -> io::Result<()> {
     //let args = std::env::args() .collect::<Vec<String>>(); 
 
     println!("Repl Environment {VERSION}");
+    let mut env = interpreter::Env::new();
     let mut out = io::stdout();
     let stdin = io::stdin();
     'main : loop {
@@ -54,6 +55,7 @@ fn main() -> io::Result<()> {
         println!("tokens: {:#?}", tokens);
         let ast = parser::Ast::parse(tokens);
         println!("ast: {:#?}", ast.nodes);
+        env.eval_ast(ast.nodes);
 
         input.clear();
     }

@@ -21,6 +21,33 @@ pub union Value {
     pub f: f64,
 }
 
+impl Value {
+    pub unsafe fn add(self, r: Value, ty: &TypeKind) -> Self {
+        match ty {
+            TypeKind::Integer => (self.i + r.i).into(),
+            TypeKind::Float => (self.f + r.f).into(),
+        }
+    }
+    pub unsafe fn sub(self, r: Value, ty: &TypeKind) -> Self {
+        match ty {
+            TypeKind::Integer => (self.i - r.i).into(),
+            TypeKind::Float => (self.f - r.f).into(),
+        }
+    }
+    pub unsafe fn mul(self, r: Value, ty: &TypeKind) -> Self {
+        match ty {
+            TypeKind::Integer => (self.i * r.i).into(),
+            TypeKind::Float => (self.f * r.f).into(),
+        }
+    }
+    pub unsafe fn div(self, r: Value, ty: &TypeKind) -> Self {
+        match ty {
+            TypeKind::Integer => (self.i / r.i).into(),
+            TypeKind::Float => (self.f / r.f).into(),
+        }
+    }
+}
+
 impl From<f64> for Value {
     fn from(value: f64) -> Self { Value { f: value } }
 }
