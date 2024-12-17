@@ -40,12 +40,19 @@ pub enum Token {
     Bang,
     Comma,
     Dot,
+    Colon,
 
     Paren(Open),
     Bracket(Open),
     Brace(Open),
 
     Unassigned(String)
+}
+
+impl Default for Token {
+    fn default() -> Self {
+        Token::Unassigned("".into())
+    }
 }
 
 impl PartialEq for Token {
@@ -56,10 +63,13 @@ impl PartialEq for Token {
             (Ident(_), Ident(_)) => true,
             (Int(_), Int(_)) => true,
             (BinaryOp(_), BinaryOp(_)) => true,
+
             (Equals, Equals) => true,
             (Bang, Bang) => true,
             (Comma, Comma) => true,
             (Dot, Dot) => true,
+            (Colon, Colon) => true,
+
             (Paren(a), Paren(b)) 
                 | (Bracket(a), Bracket(b)) 
                 | (Brace(a), Brace(b)) if a == b => true,
@@ -75,10 +85,13 @@ impl ToString for Token {
 
         match self {
             Ident(x) | Int(x) | BinaryOp(x) | Unassigned(x) => x.to_string(),
+
             Equals => "=".to_string(),
             Bang => "!".to_string(),
             Comma => ",".to_string(),
             Dot => ".".to_string(),
+            Colon => ":".to_string(),
+
             Paren(open) => if *open { "(" } else { ")" }.to_string(),
             Bracket(open) => if *open { "[" } else { "]" }.to_string(),
             Brace(open) => if *open { "{" } else { "}" }.to_string(),
@@ -120,6 +133,7 @@ pub fn tokenize(src: &str) -> Vec<Token> {
                 '!' => Bang,
                 ',' => Comma,
                 '.' => Dot,
+                ':' => Colon,
 
                 '(' => Paren(true),
                 ')' => Paren(false),
