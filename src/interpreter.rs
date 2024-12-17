@@ -28,6 +28,22 @@ impl Frame {
             vars: HashMap::new()
         }
     }
+
+    pub fn declare(&mut self, id: &str, var: Variable) {
+        self.vars.insert(id.to_owned(), var);
+    }
+
+    pub fn has_var(&self, id: &str) -> bool {
+        return self.vars.contains_key(id);
+    }
+
+    pub fn get(&self, id: &str) -> Option<&Variable> {
+        return self.vars.get(id);
+    }
+
+    pub fn get_mut(&mut self, id: &str) -> Option<&mut Variable> {
+        return self.vars.get_mut(id);
+    }
 }
 
 pub struct Env {
@@ -56,6 +72,11 @@ impl Env {
             None => { err!(fatal "Invalid variable"); }
         };
     }
+
+    pub fn set(&mut self, adr: Address, data: Value) {
+        self.mem[adr] = data;
+    }
+
     pub fn alloc(&mut self, data: Value) -> Address {
         self.mem.push(data);
         return self.mem.len() - 1;
@@ -86,6 +107,8 @@ impl Env {
             VarAssign { id_expr, assign } => self.eval_assignment(id_expr, assign),
             BinaryExpr { left, right, op } => self.eval_binary(left, right, op),
             UnaryExpr { sign, value } => self.eval_unary(sign, value),
+            FnIdent { id, params } => todo!(),
+            Csv { values } => todo!(),
             Void => todo!(),
         }
     }
@@ -97,15 +120,58 @@ impl Env {
         };
 
         let (t, v) = self.eval_node(right);
-        let ad = self.alloc(v);
-        let var = Variable {
-            id: id.to_owned(),
-            ty: t,
-            ad
-        };
+        match self.frame.get(id) {
+            Some(var) => {
+                self.set(var.ad, v);
+            },
+            None => {
+                let ad = self.alloc(v);
+                let var = Variable {
+                    id: id.to_owned(),
+                    ty: t,
+                    ad
+                };
+                self.frame.declare(id, var);
+            }
+        }
 
-        self.frame.vars.insert(id.to_owned(), var);
         return (t, v);
+    }
+
+    /*
+    fn solve_for(&mut self, mut left: &AstNode, mut right: &AstNode, id: &str) -> (TypeKind, Value) {
+        let mut lvars = self.find_undec_vars(left);
+        let mut rvars = self.find_undec_vars(right);
+        if lvars.is_none() && rvars.is_none() {
+            err!(fatal "Unable to solve for variables because all variables have already been declared");
+        }
+
+        /*
+        if let (None, Some(_)) = (lvars, rvars) {
+            std::mem::swap(&mut left, &mut right);
+            std::mem::swap(&mut lvars, &mut rvars);
+        }
+        */
+    }
+    */
+
+    fn find_undec_vars(&self, node: &AstNode) -> Option<Vec<String>> {
+        match node {
+            Identifier { id } if !self.frame.has_var(id) => Some(vec![id.to_string()]),
+            BinaryExpr { left, right, .. } => {
+                let l = self.find_undec_vars(left);
+                let r = self.find_undec_vars(right);
+                if l.is_none() && r.is_none() { return None; }
+
+                Some(match (l, r) {
+                    (Some(mut a), Some(mut b)) => { a.append(&mut b); a },
+                    (Some(a), None) => a,
+                    (None, Some(b)) => b,
+                    _ => todo!()
+                })
+            },
+            _ => None
+        }
     }
 
     fn eval_binary(&mut self, left: &AstNode, right: &AstNode, op: &str) -> (TypeKind, Value) {
