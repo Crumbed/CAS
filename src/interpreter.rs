@@ -140,18 +140,17 @@ impl Env {
 
     /*
     fn solve_for(&mut self, mut left: &AstNode, mut right: &AstNode, id: &str) -> (TypeKind, Value) {
-        let mut lvars = self.find_undec_vars(left);
-        let mut rvars = self.find_undec_vars(right);
-        if lvars.is_none() && rvars.is_none() {
+        let mut olvars = self.find_undec_vars(left);
+        let mut orvars = self.find_undec_vars(right);
+        if olvars.is_none() && orvars.is_none() {
             err!(fatal "Unable to solve for variables because all variables have already been declared");
         }
 
-        /*
         if let (None, Some(_)) = (lvars, rvars) {
             std::mem::swap(&mut left, &mut right);
-            std::mem::swap(&mut lvars, &mut rvars);
         }
-        */
+
+        return (TypeKind::Integer, 0.into());
     }
     */
 

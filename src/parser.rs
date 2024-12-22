@@ -76,6 +76,7 @@ pub enum AstNode {
     VarAssign { id_expr: Rc<AstNode>, assign: Rc<AstNode> },
     BinaryExpr { left: Rc<AstNode>, right: Rc<AstNode>, op: String },
     UnaryExpr { sign: String, value: Rc<AstNode> },
+    //VarMult { id: String, value: Rc<AstNode> },
     FnIdent { id: String, params: Rc<AstNode> },
 
     Void
@@ -145,116 +146,58 @@ impl Ast {
     }
 
     fn parse_add(&mut self) -> AstNode {
-        let left = self.parse_mult();
-        let mut node = AstNode::Void;
-        let mut extra_op = false;
+        let mut node = self.parse_mult();
 
-        if !self.has_next() { return left; } else { self.next(); }
-        let mut at = self.at().to_string();
-        while at == "+" || at == "-" {
-            let op = at;
+        while self.has_next() && (self.snext_is("+") || self.snext_is("-")) {
+            let op = self.next().to_string();
             self.check_next("Expected a value");
             let right = self.parse_mult();
 
-            if extra_op {
-                node = AstNode::BinaryExpr {
-                    left: Rc::new(node),
-                    right: Rc::new(right),
-                    op
-                };
-            } else {
-                node = AstNode::BinaryExpr {
-                    left: Rc::new(left.clone()),
-                    right: Rc::new(right),
-                    op
-                };
-            }
-
-            extra_op = true;
-            if self.has_next() {
-                let next = self.get_next().to_string();
-                if next == "+" || next == "-" { self.next(); }
-            }
-            at = self.at().to_string();
-        }
-
-        if let AstNode::Void = node { 
-            self.last();
-            return left;
+            node = AstNode::BinaryExpr {
+                left: Rc::new(node),
+                right: Rc::new(right),
+                op
+            };
         }
 
         return node;
     }
 
     fn parse_mult(&mut self) -> AstNode {
-        let left = self.parse_impl_mult();
-        let mut node = AstNode::Void;
-        let mut extra_op = false;
+        let mut node = self.parse_impl_mult();
 
-        if !self.has_next() { return left; } else { self.next(); }
-        let mut at = self.at().to_string();
-        while at == "*" || at == "/" {
-            let op = at;
+        while self.has_next() && (self.snext_is("*") || self.snext_is("/")) {
+            let op = self.next().to_string();
             self.check_next("Expected a value");
             let right = self.parse_impl_mult();
 
-            if extra_op {
-                node = AstNode::BinaryExpr {
-                    left: Rc::new(node),
-                    right: Rc::new(right),
-                    op
-                };
-            } else {
-                node = AstNode::BinaryExpr {
-                    left: Rc::new(left.clone()),
-                    right: Rc::new(right),
-                    op
-                };
-            }
-
-            extra_op = true;
-            if self.has_next() {
-                let next = self.get_next().to_string();
-                if next == "*" || next == "/" { self.next(); }
-            }
-            at = self.at().to_string();
-        }
-
-        if let AstNode::Void = node { 
-            self.last();
-            return left;
+            node = AstNode::BinaryExpr {
+                left: Rc::new(node),
+                right: Rc::new(right),
+                op
+            };
         }
 
         return node;
     }
 
     fn parse_impl_mult(&mut self) -> AstNode {
-        let left = self.parse_unary();
-        let mut node = AstNode::Void;
+        let mut node = self.parse_unary();
 
-        let mut x2 = false;
         while self.has_next() && (self.next_is(Paren(true)) || self.next_is(Ident("".into()))) {
             self.next();
             let right = self.parse_unary();
-            if x2 {
-                node = AstNode::BinaryExpr {
-                    left: Rc::new(node),
-                    right: Rc::new(right), 
-                    op: "*".into()
-                };
-            } else {
-                node = AstNode::BinaryExpr {
-                    left: Rc::new(left.clone()),
-                    right: Rc::new(right), 
-                    op: "*".into()
-                };
+            /*
+            if *self.at() == Ident("".into()) {
+                
             }
+            */
 
-            x2 = true;
-        }
-
-        if let AstNode::Void = node {
-            return left;
+            node = AstNode::BinaryExpr {
+                left: Rc::new(node),
+                right: Rc::new(right), 
+                op: "*".into()
+            };
         }
 
         return node;
@@ -384,5 +327,8 @@ impl Ast {
     }
     fn next_is(&mut self, tkn: Token) -> bool {
         self.has_next() && *self.get_next() == tkn
+    }
+    fn snext_is(&mut self, str: &str) -> bool {
+        self.has_next() && self.get_next().to_string() == str
     }
 }

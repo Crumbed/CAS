@@ -6,7 +6,7 @@ mod interpreter;
 use std::io;
 use io::Write;
 
-pub const VERSION: &'static str = "v0.7";
+pub const VERSION: &'static str = "v0.8";
 
 #[macro_export]
 macro_rules! err {
