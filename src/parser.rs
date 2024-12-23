@@ -70,14 +70,15 @@ impl Debug for Value {
 #[derive(Debug, Clone)]
 pub enum AstNode {
     Identifier { id: String },
+    FnIdent { id: String, params: Rc<AstNode> },
     Literal { kind: TypeKind, data: Value },
-    Csv { values: Vec<Rc<AstNode>> },
+    Csv { values: Vec<AstNode> },
 
+    //SolveAssign {  },
     VarAssign { id_expr: Rc<AstNode>, assign: Rc<AstNode> },
     BinaryExpr { left: Rc<AstNode>, right: Rc<AstNode>, op: String },
     UnaryExpr { sign: String, value: Rc<AstNode> },
-    //VarMult { id: String, value: Rc<AstNode> },
-    FnIdent { id: String, params: Rc<AstNode> },
+    FnCall { id: String, args: Rc<AstNode> },
 
     Void
 }
@@ -85,40 +86,38 @@ pub enum AstNode {
 pub struct Ast {
     pub nodes   :   Vec<AstNode>,
     pub tokens  :   Vec<Token>,
+    pub fns     :   Vec<String>,
     pub at      :   usize,
 }
 
 use Token::*;
 impl Ast {
     fn parse_root(&mut self) -> AstNode {
-        self.parse_assign()
+        self.parse_keyword()
     }
 
-    fn parse_csv(&mut self) -> AstNode {
-        let mut val = self.parse_assign();
-        if !self.has_next() || !self.next_is(Comma) { return val; }
-        let mut csv = vec![Rc::new(val)];
+    fn parse_keyword(&mut self) -> AstNode {
+        match self.at() {
+            Ident(id) if id == "fn" => {
+                let left = self.parse_fn();
+                if !self.has_next() || !self.next_is(Equals) { return left; }
+                self.next();
+                self.check_next("Expected expression after =, but found nothing");
+                let assign = Rc::new(self.parse_add());
+                if let AstNode::FnIdent { id,.. } = &left {
+                    self.fns.push(id.clone());
+                }
 
-        while self.has_next() && *self.next() == Comma {
-            self.check_next("Expected value after , trailing commas arent allowed");
-            val = self.parse_assign();
-            csv.push(Rc::new(val));
+                return AstNode::VarAssign {
+                    id_expr: Rc::new(left),
+                    assign
+                };
+            },
+            Ident(id) if id == "let" => {
+                todo!()
+            }
+            _ => self.parse_assign()
         }
-
-        if self.has_next() { self.last(); }
-        return AstNode::Csv { values: csv }; 
-    }
-
-    fn parse_assign(&mut self) -> AstNode {
-        let left = self.parse_fn();
-        if !self.has_next() || !self.next_is(Equals) { return left; }
-        self.next();
-        self.check_next("Expected expression after =, but found nothing");
-        let assign = Rc::new(self.parse_add());
-        return AstNode::VarAssign {
-            id_expr: Rc::new(left),
-            assign
-        };
     }
 
     fn parse_fn(&mut self) -> AstNode {
@@ -145,6 +144,34 @@ impl Ast {
         };
     }
 
+    fn parse_csv(&mut self) -> AstNode {
+        let mut val = self.parse_assign();
+        if !self.has_next() || !self.next_is(Comma) { return val; }
+        let mut csv = vec![val];
+
+        while self.has_next() && self.next_is(Comma) {
+            self.next();
+            self.check_next("Expected value after , trailing commas arent allowed");
+            val = self.parse_assign();
+            csv.push(val);
+        }
+
+        return AstNode::Csv { values: csv }; 
+    }
+
+    fn parse_assign(&mut self) -> AstNode {
+        let left = self.parse_add();
+        if !self.has_next() || !self.next_is(Equals) { return left; }
+        self.next();
+        self.check_next("Expected expression after =, but found nothing");
+        let assign = Rc::new(self.parse_add());
+        return AstNode::VarAssign {
+            id_expr: Rc::new(left),
+            assign
+        };
+    }
+
+
     fn parse_add(&mut self) -> AstNode {
         let mut node = self.parse_mult();
 
@@ -164,39 +191,28 @@ impl Ast {
     }
 
     fn parse_mult(&mut self) -> AstNode {
-        let mut node = self.parse_impl_mult();
+        let mut node = self.parse_unary();
 
-        while self.has_next() && (self.snext_is("*") || self.snext_is("/")) {
+        while self.has_next() && (self.snext_is("*") || self.snext_is("/") || self.snext_is("(") || self.next_is(Ident("".into()))) {
+            if self.snext_is("(") || self.next_is(Ident("".into())) {
+                self.next();
+                let right = self.parse_unary();
+
+                node = AstNode::BinaryExpr {
+                    left: Rc::new(node),
+                    right: Rc::new(right), 
+                    op: "*".into()
+                };
+                continue;
+            }
             let op = self.next().to_string();
             self.check_next("Expected a value");
-            let right = self.parse_impl_mult();
+            let right = self.parse_unary();
 
             node = AstNode::BinaryExpr {
                 left: Rc::new(node),
                 right: Rc::new(right),
                 op
-            };
-        }
-
-        return node;
-    }
-
-    fn parse_impl_mult(&mut self) -> AstNode {
-        let mut node = self.parse_unary();
-
-        while self.has_next() && (self.next_is(Paren(true)) || self.next_is(Ident("".into()))) {
-            self.next();
-            let right = self.parse_unary();
-            /*
-            if *self.at() == Ident("".into()) {
-                
-            }
-            */
-
-            node = AstNode::BinaryExpr {
-                left: Rc::new(node),
-                right: Rc::new(right), 
-                op: "*".into()
             };
         }
 
@@ -221,7 +237,7 @@ impl Ast {
                     .into()
             }
         } else {
-            self.parse_primary()
+            self.parse_call()
         };
         
         if let AstNode::Literal { kind, data } = &mut value {
@@ -240,6 +256,22 @@ impl Ast {
         return value;
     }
 
+    fn parse_call(&mut self) -> AstNode {
+        let id = self.parse_primary();
+        if !self.has_next() || !self.snext_is("(") { return id; }
+        if let Ident(ident) = self.at() {
+            if !self.fns.contains(&ident) { return id; }
+        } else { return id; }
+        self.next();
+        let args = self.parse_paren();
+        let id = if let AstNode::Identifier {id} = id { id } else { "".into() };
+
+        return AstNode::FnCall {
+            id,
+            args: args.into()
+        };
+    }
+
     fn parse_primary(&mut self) -> AstNode {
         match self.at().clone() {
             Int(x) => AstNode::Literal { kind: TypeKind::Integer, data: x.parse::<i64>().unwrap().into() },
@@ -256,7 +288,7 @@ impl Ast {
         if !self.has_next() { err!(fatal "Expected expression OR ) after ( but found nothing"); }
         let at = self.next();
         if *at == Paren(false) { return AstNode::Void; }
-        let expr = self.parse_add();
+        let expr = self.parse_csv();
         self.expect(Paren(false), "Expected a ) after expression");
         return expr;
     }
@@ -269,9 +301,10 @@ impl Ast {
 
 
 impl Ast {
-    pub fn parse(tokens: Vec<Token>) -> Ast {
+    pub fn parse(tokens: Vec<Token>, fns: Vec<String>) -> Ast {
         let mut ast = Ast {
             nodes: vec![],
+            fns,
             tokens,
             at: 0
         };

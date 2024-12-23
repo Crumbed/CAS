@@ -5,17 +5,28 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::err;
+use crate::err::RtResult;
+use crate::err::RuntimeError::*;
 use crate::parser;
 use parser::Value;
 use parser::TypeKind;
 use parser::AstNode;
 
+#[derive(Debug, Clone)]
 pub struct Variable {
     pub id: String,
     pub ty: TypeKind,
     pub ad: Address
 }
 
+#[derive(Debug, Clone)]
+pub struct Function {
+    pub id: String,
+    pub params: Vec<String>,
+    pub body: AstNode
+}
+
+#[derive(Debug, Clone)]
 pub struct Frame {
     pub start: Address,
     vars: HashMap<String, Variable>,
@@ -46,30 +57,49 @@ impl Frame {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Env {
     mem: Vec<Value>,
+    funcs: HashMap<(String, usize), Function>,
     frames: Vec<Frame>,
     frame: Frame
 }
 
 pub type Address = usize;
-
+pub type RuntimeValue = (TypeKind, Value);
 
 impl Env {
     pub fn new() -> Self {
         let frame = Frame::new(0);
         Env {
             mem: Vec::with_capacity(100),
+            funcs: HashMap::new(),
             frames: vec![],
             frame
         }
     }
 
-    pub fn get(&self, var: &Variable) -> &Value {
+    pub fn new_frame(&mut self) {
+        let frame = Frame::new(self.mem.len());
+        self.frames.push(frame);
+        let current_frame = self.frames.len() - 1;
+        std::mem::swap(&mut self.frames[current_frame], &mut self.frame);
+    }
+    pub fn pop_frame(&mut self) {
+        let start = self.frame.start;
+        self.frame = self.frames.pop().unwrap();
+        self.free_to(start);
+    }
+
+    pub fn get_fn(&self, id: &str, p_count: usize) -> Option<Function> {
+        return self.funcs.get(&(id.to_string(), p_count)).cloned();
+    }
+
+    pub fn get(&self, var: &Variable) -> RtResult<&Value> {
         let val = self.mem.get(var.ad);
         return match val {
-            Some(x) => x,
-            None => { err!(fatal "Invalid variable"); }
+            Some(x) => Ok(x),
+            None => Err(VarUndefined(var.id.clone()))
         };
     }
 
@@ -82,7 +112,7 @@ impl Env {
         return self.mem.len() - 1;
     }
     pub fn free_to(&mut self, adr: Address) {
-        while self.mem.len() - 1 != adr {
+        while self.mem.len() != adr {
             self.mem.pop();
         }
     }
@@ -92,7 +122,9 @@ use AstNode::*;
 impl Env {
     pub fn eval_ast(&mut self, ast: Vec<AstNode>) {
         for node in ast {
-            let (t, v) = self.eval_node(&node);
+            let value = self.eval_node(&node);
+            println!("{:#?}", self);
+            let (t, v) = value.unwrap();
             match t {
                 TypeKind::Integer => println!("Result: {}", unsafe {v.i}),
                 TypeKind::Float => println!("Result: {}", unsafe {v.f}),
@@ -100,26 +132,65 @@ impl Env {
         }
     }
 
-    fn eval_node(&mut self, node: &AstNode) -> (TypeKind, Value) {
+    fn eval_node(&mut self, node: &AstNode) -> RtResult<RuntimeValue> {
         match node {
             Identifier { id } => self.eval_ident(id),
-            Literal { kind, data } => (*kind, *data),
+            Literal { kind, data } => ok(*kind, *data),
             VarAssign { id_expr, assign } => self.eval_assignment(id_expr, assign),
             BinaryExpr { left, right, op } => self.eval_binary(left, right, op),
             UnaryExpr { sign, value } => self.eval_unary(sign, value),
-            FnIdent { id, params } => todo!(),
-            Csv { values } => todo!(),
-            Void => todo!(),
+            FnCall { id, args } => self.eval_fn_call(id, args),
+            Void | FnIdent {..} | Csv {..} => todo!(),
         }
     }
 
-    fn eval_assignment(&mut self, left: &AstNode, right: &AstNode) -> (TypeKind, Value) {
+    fn eval_fn_call(&mut self, id: &str, args: &AstNode) -> RtResult<RuntimeValue> {
+        let args = match args {
+            Csv { values } => {
+                let mut err = ok(TypeKind::Integer, 0.into());
+                let values = values.iter().map(|v| match self.eval_node(v) {
+                    Ok(x) => x,
+                    Err(e) => { err = Err(e); (TypeKind::Integer, 0.into()) }
+                }).collect();
+                _ = err?;
+                values
+            },
+            _ => vec![self.eval_node(args)?]
+        };
+        let func = match self.get_fn(id, args.len()) {
+            Some(f) => Ok(f),
+            None => Err(FnUndefined(id.to_string(), args.len()))
+        }?;
+        self.new_frame();
+        for (arg, param) in args.iter().zip(func.params.iter()) {
+            let (t, v) = arg;
+            let ad = self.alloc(*v);
+            let var = Variable {
+                id: param.to_string(),
+                ty: *t,
+                ad
+            };
+            self.frame.declare(param, var);
+        }
+        let body = func.body;
+        //println!("{:#?}", self);
+        let value = self.eval_node(&body);
+        self.pop_frame();
+
+        return value;
+    }
+
+    fn eval_assignment(&mut self, left: &AstNode, right: &AstNode) -> RtResult<RuntimeValue> {
+        if let FnIdent { id, params } = left {
+            return self.eval_fn_dec(id, &params, right);
+        }
+
         let id = if let Identifier { id } = left { id } else {
             // else if not an ident
             todo!();
         };
 
-        let (t, v) = self.eval_node(right);
+        let (t, v) = self.eval_node(right)?;
         match self.frame.get(id) {
             Some(var) => {
                 self.set(var.ad, v);
@@ -135,24 +206,59 @@ impl Env {
             }
         }
 
-        return (t, v);
+        return ok(t, v);
     }
 
-    /*
-    fn solve_for(&mut self, mut left: &AstNode, mut right: &AstNode, id: &str) -> (TypeKind, Value) {
-        let mut olvars = self.find_undec_vars(left);
-        let mut orvars = self.find_undec_vars(right);
-        if olvars.is_none() && orvars.is_none() {
-            err!(fatal "Unable to solve for variables because all variables have already been declared");
-        }
+    fn eval_fn_dec(&mut self, id: &str, params: &AstNode, body: &AstNode) -> RtResult<RuntimeValue> {
+        let params = match params {
+            Identifier { id } => vec![id.to_string()],
+            Csv { values } => {
+                let mut valid = true;
+                let values: Vec<String> = values.iter().map(|v| { 
+                    match v {
+                        Identifier { id } => id.to_string(),
+                        Literal { kind, data } => {
+                            valid = false;
+                            match kind {
+                                TypeKind::Float => unsafe { data.f.to_string() }
+                                TypeKind::Integer => unsafe { data.i.to_string() }
+                            }
+                        },
+                        _ => "[Expression]".into()
+                    }
+                }).collect();
 
-        if let (None, Some(_)) = (lvars, rvars) {
-            std::mem::swap(&mut left, &mut right);
-        }
+                if !valid { return Err(InvalidFnDec(values)); }
+                values
+            },
+            _ => return Err(InvalidFnDec(vec!["Expression".into()]))
+        };
 
-        return (TypeKind::Integer, 0.into());
+        let id = id.to_string();
+        let func = Function { id, params, body: body.clone() };
+        self.funcs.insert((func.id.clone(), func.params.len()), func);
+
+        return ok(TypeKind::Integer, 0.into());
     }
-    */
+
+    fn solve_for<'a>(&mut self, mut left: &'a AstNode, mut right: &'a AstNode, id: &str) -> RtResult<RuntimeValue> {
+        let olvars = self.find_undec_vars(left);
+        let orvars = self.find_undec_vars(right);
+        let (lvars, rvars) = match (olvars, orvars) {
+            (None, Some(vars)) => {
+                std::mem::swap(&mut left, &mut right);
+                (vars, Vec::<String>::with_capacity(0))
+            },
+            (Some(vars), None) => (vars, Vec::<String>::with_capacity(0)),
+            (Some(lvars), Some(rvars)) => (lvars, rvars),
+            (None, None) => {
+                return Err(SolveFor("Unable to solve for variables because all variables have already been declared".into()));
+            }
+        };
+        // only support linear equations rn
+
+        return ok(TypeKind::Integer, 0.into());
+    }
 
     fn find_undec_vars(&self, node: &AstNode) -> Option<Vec<String>> {
         match node {
@@ -173,9 +279,9 @@ impl Env {
         }
     }
 
-    fn eval_binary(&mut self, left: &AstNode, right: &AstNode, op: &str) -> (TypeKind, Value) {
-        let (lt, mut l) = self.eval_node(left);
-        let (rt, mut r) = self.eval_node(right);
+    fn eval_binary(&mut self, left: &AstNode, right: &AstNode, op: &str) -> RtResult<RuntimeValue> {
+        let (lt, mut l) = self.eval_node(left)?;
+        let (rt, mut r) = self.eval_node(right)?;
         
         // if types are different, one is a float so the expression 
         // should be evaluated as a float
@@ -197,12 +303,12 @@ impl Env {
             }
         };
 
-        return (t, v);
+        return ok(t, v);
     }
 
-    fn eval_unary(&mut self, sign: &str, expr: &AstNode) -> (TypeKind, Value) {
-        let (t, v) = self.eval_node(expr);
-        return (t, match sign {
+    fn eval_unary(&mut self, sign: &str, expr: &AstNode) -> RtResult<RuntimeValue> {
+        let (t, v) = self.eval_node(expr)?;
+        return ok(t, match sign {
             "+" => match t {
                 TypeKind::Integer => unsafe { v.i.abs().into() },
                 TypeKind::Float => unsafe { v.f.abs().into() }
@@ -215,15 +321,21 @@ impl Env {
         });
     }
 
-    fn eval_ident(&mut self, ident: &str) -> (TypeKind, Value) {
+    fn eval_ident(&mut self, ident: &str) -> RtResult<RuntimeValue> {
         let var = self.frame.vars.get(ident);
         return match var {
-            Some(x) => (x.ty, *self.get(x)),
-            None => { err!(fatal format!("Variable {} is not declared", ident)); }
+            Some(x) => ok(x.ty, *self.get(x)?),
+            None => Err(VarUndefined(ident.to_string()))
         }
     }
 }
 
+
+
+
+pub fn ok(t: TypeKind, v: Value) -> RtResult<RuntimeValue> {
+    Ok((t, v))
+}
 
 
 

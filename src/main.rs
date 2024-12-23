@@ -2,11 +2,13 @@
 mod lexer;
 mod parser;
 mod interpreter;
+mod equation;
+mod err;
 
 use std::io;
 use io::Write;
 
-pub const VERSION: &'static str = "v0.8";
+pub const VERSION: &'static str = "v0.10";
 
 #[macro_export]
 macro_rules! err {
@@ -44,6 +46,7 @@ fn main() -> io::Result<()> {
     let mut env = interpreter::Env::new();
     let mut out = io::stdout();
     let stdin = io::stdin();
+    let mut fns = vec![];
     'main : loop {
         print!("> ");
         out.flush()?;
@@ -53,10 +56,11 @@ fn main() -> io::Result<()> {
         println!("eq: {input}");
         let tokens = lexer::tokenize(&input);
         println!("tokens: {:#?}", tokens);
-        let ast = parser::Ast::parse(tokens);
+        let ast = parser::Ast::parse(tokens, fns);
         println!("ast: {:#?}", ast.nodes);
         env.eval_ast(ast.nodes);
 
+        fns = ast.fns;
         input.clear();
     }
 }
