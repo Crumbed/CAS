@@ -9,6 +9,7 @@ use std::io;
 use io::Write;
 
 pub const VERSION: &'static str = "v0.10";
+pub static mut DEBUG: bool = false;
 
 #[macro_export]
 macro_rules! err {
@@ -40,7 +41,14 @@ macro_rules! err {
 
 fn main() -> io::Result<()> {
     let mut input = String::new();
-    //let args = std::env::args() .collect::<Vec<String>>(); 
+    let args = std::env::args()
+        .collect::<Vec<String>>(); 
+    unsafe {
+        for arg in args.iter().skip(1) {
+            if arg == "-debug" { DEBUG = true; }
+        }
+    }
+
 
     println!("Repl Environment {VERSION}");
     let mut env = interpreter::Env::new();
@@ -53,11 +61,11 @@ fn main() -> io::Result<()> {
         stdin.read_line(&mut input)?;
         if input == ".exit\n" { break 'main Ok(()); }
 
-        println!("eq: {input}");
+        if unsafe { DEBUG } { println!("eq: {input}"); }
         let tokens = lexer::tokenize(&input);
-        println!("tokens: {:#?}", tokens);
+        if unsafe { DEBUG } { println!("tokens: {:#?}", tokens); }
         let ast = parser::Ast::parse(tokens, fns);
-        println!("ast: {:#?}", ast.nodes);
+        if unsafe { DEBUG } { println!("ast: {:#?}", ast.nodes); }
         env.eval_ast(ast.nodes);
 
         fns = ast.fns;

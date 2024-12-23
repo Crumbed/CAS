@@ -8,6 +8,7 @@ use crate::err;
 use crate::err::RtResult;
 use crate::err::RuntimeError::*;
 use crate::parser;
+use crate::DEBUG;
 use parser::Value;
 use parser::TypeKind;
 use parser::AstNode;
@@ -123,7 +124,7 @@ impl Env {
     pub fn eval_ast(&mut self, ast: Vec<AstNode>) {
         for node in ast {
             let value = self.eval_node(&node);
-            println!("{:#?}", self);
+            if unsafe { DEBUG } { println!("{:#?}", self); }
             let (t, v) = value.unwrap();
             match t {
                 TypeKind::Integer => println!("Result: {}", unsafe {v.i}),
