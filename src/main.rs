@@ -1,4 +1,3 @@
-
 mod lexer;
 mod parser;
 mod interpreter;
@@ -6,10 +5,14 @@ mod equation;
 mod err;
 
 use std::io;
+use interpreter::RuntimeValue;
 use io::Write;
+use parser::TypeKind;
 
-pub const VERSION: &'static str = "v0.13";
-pub static mut DEBUG: bool = false;
+pub const VERSION: &'static str = "v0.15";
+pub static mut TOKENS: bool = false;
+pub static mut AST: bool = false;
+pub static mut ENV: bool = false;
 
 #[macro_export]
 macro_rules! err {
@@ -43,10 +46,31 @@ fn main() -> io::Result<()> {
     let mut input = String::new();
     let args = std::env::args()
         .collect::<Vec<String>>(); 
+    let mut arg_count = 0;
     unsafe {
         for arg in args.iter().skip(1) {
-            if arg == "-debug" { DEBUG = true; }
+            if arg.starts_with("-") { arg_count += 1; }
+            if      arg == "-tokens" || arg == "-t" { TOKENS = true; }
+            else if arg == "-ast" || arg == "-a"    { AST = true; }
+            else if arg == "-env" || arg == "-e"    { ENV = true; }
         }
+    }
+    
+    // file path
+    if args.len() - 1 - arg_count == 1 {
+        let path = args.last().unwrap();
+        let src = std::fs::read_to_string(path)
+            .expect("Unable to read file");
+
+        let tokens = lexer::tokenize(&src);
+        if unsafe { TOKENS } { println!("Tokens: {:#?}", tokens); }
+        let ast = parser::Ast::parse(tokens, vec![]);
+        if unsafe { AST } { println!("Ast: {:#?}", ast.nodes); }
+        let mut env = interpreter::Env::new();
+        let results = env.eval_ast(ast.nodes);
+        unsafe { print_results(&results.unwrap()); }
+
+        return Ok(());
     }
 
 
@@ -61,18 +85,27 @@ fn main() -> io::Result<()> {
         stdin.read_line(&mut input)?;
         if input == ".exit\n" { break 'main Ok(()); }
 
-        if unsafe { DEBUG } { println!("eq: {input}"); }
         let tokens = lexer::tokenize(&input);
-        if unsafe { DEBUG } { println!("tokens: {:#?}", tokens); }
+        if unsafe { TOKENS } { println!("Tokens: {:#?}", tokens); }
         let ast = parser::Ast::parse(tokens, fns);
-        if unsafe { DEBUG } { println!("ast: {:#?}", ast.nodes); }
-        env.eval_ast(ast.nodes);
+        if unsafe { AST } { println!("Ast: {:#?}", ast.nodes); }
+        let results = env.eval_ast(ast.nodes);
+        unsafe { print_results(&results.unwrap()); }
 
         fns = ast.fns;
         input.clear();
     }
 }
 
+
+unsafe fn print_results(results: &Vec<RuntimeValue>) {
+    for (t, v) in results {
+        match t {
+            TypeKind::Integer => println!("Result: {}", v.i),
+            TypeKind::Float => println!("Result: {}", v.f)
+        }
+    }
+}
 
 pub fn error(msg: &str) {
     println!("Error: {}", msg);

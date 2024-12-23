@@ -149,7 +149,18 @@ pub fn tokenize(src: &str) -> Vec<Token> {
             _ => Unassigned(c.to_string())
         };
 
-        if *tokens.last().unwrap() == End && tkn == End { continue; }
+        if tkn == End {
+            let last = tokens.last().unwrap().clone();
+            match last {
+                Paren(true) 
+                    | Bracket(true) 
+                    | Brace(true)
+                    | Comma 
+                    | End if tkn == End => continue,
+                _ => ()
+            }
+        }
+
         tokens.push(tkn);
     }
 

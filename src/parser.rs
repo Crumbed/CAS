@@ -5,7 +5,6 @@ use core::fmt::Debug;
 
 use crate::lexer;
 use crate::err;
-use crate::DEBUG;
 
 use lexer::Token;
 
@@ -194,9 +193,6 @@ impl Ast {
         self.next();
         self.check_next("Expected expression after =, but found nothing");
         let assign = Rc::new(self.parse_add());
-        if self.is_end() {
-            self.next();
-        }
 
         return AstNode::VarAssign {
             id_expr: Rc::new(left),
@@ -333,7 +329,6 @@ impl Ast {
             Brace(true) => self.parse_block(),
 
             End => { 
-                if unsafe { DEBUG } { println!("{:#?}", self.nodes); }
                 err!(fatal "Unexpected expression ending"); 
             },
             _ => {
@@ -357,7 +352,6 @@ impl Ast {
         while self.has_next() && !self.snext_is("}") {
             self.next();
             let node = self.parse_root();
-            println!("{:#?}\n{:?}", node, self.at());
             body.push(node);
         }
         self.check_next("Unclosed block, expected }");
@@ -408,6 +402,14 @@ impl Ast {
     fn has_last(&self) -> bool { self.at > 0 }
     fn next(&mut self) -> &Token {
         self.at += 1;
+        return self.at();
+    }
+    fn next_valid(&mut self) -> &Token {
+        self.at += 1;
+        while self.is_end() {
+            self.at += 1;
+        }
+
         return self.at();
     }
     fn last(&mut self) -> &Token {

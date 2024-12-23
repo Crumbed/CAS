@@ -8,7 +8,7 @@ use crate::err;
 use crate::err::RtResult;
 use crate::err::RuntimeError::*;
 use crate::parser;
-use crate::DEBUG;
+use crate::ENV;
 use parser::Value;
 use parser::TypeKind;
 use parser::AstNode;
@@ -122,16 +122,15 @@ impl Env {
 
 use AstNode::*;
 impl Env {
-    pub fn eval_ast(&mut self, ast: Vec<AstNode>) {
+    pub fn eval_ast(&mut self, ast: Vec<AstNode>) -> RtResult<Vec<RuntimeValue>> {
+        let mut results = Vec::with_capacity(ast.len());
         for node in ast {
-            let value = self.eval_node(&node);
-            if unsafe { DEBUG } { println!("{:#?}", self); }
-            let (t, v) = value.unwrap();
-            match t {
-                TypeKind::Integer => println!("Result: {}", unsafe {v.i}),
-                TypeKind::Float => println!("Result: {}", unsafe {v.f}),
-            }
+            let value = self.eval_node(&node)?;
+            if unsafe { ENV } { println!("{:#?}", self); }
+            results.push(value);
         }
+
+        return Ok(results);
     }
 
     fn eval_node(&mut self, node: &AstNode) -> RtResult<RuntimeValue> {
@@ -176,7 +175,6 @@ impl Env {
             self.frame.declare(param, var);
         }
         let body = func.body;
-        if unsafe { DEBUG } { println!("{:#?}", self); }
         let value = self.eval_node(&body);
         self.pop_frame();
 
