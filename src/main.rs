@@ -8,7 +8,7 @@ mod err;
 use std::io;
 use io::Write;
 
-pub const VERSION: &'static str = "v0.11";
+pub const VERSION: &'static str = "v0.13";
 pub static mut DEBUG: bool = false;
 
 #[macro_export]

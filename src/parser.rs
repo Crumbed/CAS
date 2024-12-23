@@ -5,6 +5,7 @@ use core::fmt::Debug;
 
 use crate::lexer;
 use crate::err;
+use crate::DEBUG;
 
 use lexer::Token;
 
@@ -98,6 +99,7 @@ pub enum AstNode {
     BinaryExpr { left: Rc<AstNode>, right: Rc<AstNode>, op: String },
     UnaryExpr { sign: String, value: Rc<AstNode> },
     FnCall { id: String, args: Rc<AstNode> },
+    BlockExpr { body: Vec<AstNode>, is_fn: bool },
 
     Void
 }
@@ -112,7 +114,12 @@ pub struct Ast {
 use Token::*;
 impl Ast {
     fn parse_root(&mut self) -> AstNode {
-        self.parse_keyword()
+        let node = self.parse_keyword();
+        if self.next_is(End) {
+            self.next();
+        }
+
+        return node;
     }
 
     fn parse_keyword(&mut self) -> AstNode {
@@ -122,7 +129,10 @@ impl Ast {
                 if !self.has_next() || !self.next_is(Equals) { return left; }
                 self.next();
                 self.check_next("Expected expression after =, but found nothing");
-                let assign = Rc::new(self.parse_add());
+                let mut assign = Rc::new(self.parse_add());
+                if let AstNode::BlockExpr { is_fn,.. } = Rc::get_mut(&mut assign).unwrap() {
+                    *is_fn = true;
+                }
                 if let AstNode::FnIdent { id,.. } = &left {
                     self.fns.push(id.clone());
                 }
@@ -184,6 +194,10 @@ impl Ast {
         self.next();
         self.check_next("Expected expression after =, but found nothing");
         let assign = Rc::new(self.parse_add());
+        if self.is_end() {
+            self.next();
+        }
+
         return AstNode::VarAssign {
             id_expr: Rc::new(left),
             assign
@@ -194,7 +208,7 @@ impl Ast {
     fn parse_add(&mut self) -> AstNode {
         let mut node = self.parse_mult();
 
-        while self.has_next() && (self.snext_is("+") || self.snext_is("-")) {
+        while self.snext_is("+") || self.snext_is("-") {
             let op = self.next().to_string();
             self.check_next("Expected a value");
             let right = self.parse_mult();
@@ -212,7 +226,7 @@ impl Ast {
     fn parse_mult(&mut self) -> AstNode {
         let mut node = self.parse_exp();
 
-        while self.has_next() && (self.snext_is("*") || self.snext_is("/") || self.snext_is("(") || self.next_is(Ident("".into()))) {
+        while self.snext_is("*") || self.snext_is("/") || self.snext_is("(") || self.next_is(Ident("".into())) {
             if self.snext_is("(") || self.next_is(Ident("".into())) {
                 self.next();
                 let right = self.parse_exp();
@@ -241,7 +255,7 @@ impl Ast {
     fn parse_exp(&mut self) -> AstNode {
         let mut node = self.parse_unary();
 
-        while self.has_next() && self.snext_is("^") {
+        while self.snext_is("^") {
             self.next();
             self.check_next("Expected a value");
             let pow = self.parse_unary();
@@ -285,7 +299,9 @@ impl Ast {
             *kind = TypeKind::Float;
             unsafe { data.f = data.i as f64; }
 
-            if !self.next_is(Int("".into())) { return value; }
+            if !self.next_is(Int("".into())) {
+                return value;
+            }
             let nstr = self.next().to_string();
             data.f = unsafe {data.f} + nstr.parse::<f64>().unwrap() 
                 / 10usize.pow(nstr.len() as u32) as f64;
@@ -295,7 +311,7 @@ impl Ast {
 
     fn parse_call(&mut self) -> AstNode {
         let id = self.parse_primary();
-        if !self.has_next() || !self.snext_is("(") { return id; }
+        if !self.snext_is("(") { return id; }
         if let Ident(ident) = self.at() {
             if !self.fns.contains(&ident) { return id; }
         } else { return id; }
@@ -314,7 +330,12 @@ impl Ast {
             Int(x) => AstNode::Literal { kind: TypeKind::Integer, data: x.parse::<i64>().unwrap().into() },
             Ident(name) => AstNode::Identifier { id: name },
             Paren(true) => self.parse_paren(),
+            Brace(true) => self.parse_block(),
 
+            End => { 
+                if unsafe { DEBUG } { println!("{:#?}", self.nodes); }
+                err!(fatal "Unexpected expression ending"); 
+            },
             _ => {
                 err!(fatal format!("Unidentified token: {:?}", self.at()));
             }
@@ -328,6 +349,23 @@ impl Ast {
         let expr = self.parse_csv();
         self.expect(Paren(false), "Expected a ) after expression");
         return expr;
+    }
+
+    fn parse_block(&mut self) -> AstNode {
+        if !self.has_next() { err!(fatal "Expected expression(s) or }, after {, but found nothing"); }
+        let mut body = Vec::new();
+        while self.has_next() && !self.snext_is("}") {
+            self.next();
+            let node = self.parse_root();
+            println!("{:#?}\n{:?}", node, self.at());
+            body.push(node);
+        }
+        self.check_next("Unclosed block, expected }");
+
+        return AstNode::BlockExpr { 
+            body,
+            is_fn: false
+        };
     }
 }
 
@@ -358,7 +396,15 @@ impl Ast {
         return ast;
     }
 
-    fn has_next(&self) -> bool { self.at < self.tokens.len() - 1 }
+    fn has_next(&mut self) -> bool { 
+        let mut has_next = self.at < self.tokens.len() - 1;
+        //if has_next && self.tokens[self.tokens.len() - 1] == End {
+        //    self.at += 1;
+        //    has_next = false;
+        //}
+
+        return has_next;
+    }
     fn has_last(&self) -> bool { self.at > 0 }
     fn next(&mut self) -> &Token {
         self.at += 1;
@@ -374,7 +420,7 @@ impl Ast {
         }
         err!(fatal "Can't get token");
     }
-    fn get_next(&mut self) -> &Token {
+    fn get_next(&self) -> &Token {
         if let Some(t) = self.tokens.get(self.at + 1) {
             return t;
         }
@@ -387,6 +433,9 @@ impl Ast {
         err!(fatal "Can't get last token");
     }
 
+    fn is_end(&mut self) -> bool {
+        self.next_is(End)
+    }
     fn check_next(&mut self, msg: &str) {
         if !self.has_next() { err!(fatal msg); }
         self.at += 1;

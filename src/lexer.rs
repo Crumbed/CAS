@@ -47,6 +47,7 @@ pub enum Token {
     Bracket(Open),
     Brace(Open),
 
+    End,
     Unassigned(String)
 }
 
@@ -70,6 +71,7 @@ impl PartialEq for Token {
             (Comma, Comma) => true,
             (Dot, Dot) => true,
             (Colon, Colon) => true,
+            (End, End) => true,
 
             (Paren(a), Paren(b)) 
                 | (Bracket(a), Bracket(b)) 
@@ -92,6 +94,7 @@ impl ToString for Token {
             Comma => ",".to_string(),
             Dot => ".".to_string(),
             Colon => ":".to_string(),
+            End => ";".to_string(),
 
             Paren(open) => if *open { "(" } else { ")" }.to_string(),
             Bracket(open) => if *open { "[" } else { "]" }.to_string(),
@@ -125,27 +128,29 @@ pub fn tokenize(src: &str) -> Vec<Token> {
         }
 
         next = true;
-        match c {
-            ' ' | '\n' | '\t' => continue,
-            _ => tokens.push(match c {
-                '+' | '-' | '*' | '/' | '^' => BinaryOp(c.to_string()),
+        let tkn = match c {
+            ' ' | '\t' => continue,
+            '+' | '-' | '*' | '/' | '^' => BinaryOp(c.to_string()),
+            ';' | '\n' => End,
 
-                '=' => Equals,
-                '!' => Bang,
-                ',' => Comma,
-                '.' => Dot,
-                ':' => Colon,
+            '=' => Equals,
+            '!' => Bang,
+            ',' => Comma,
+            '.' => Dot,
+            ':' => Colon,
 
-                '(' => Paren(true),
-                ')' => Paren(false),
-                '[' => Bracket(true),
-                ']' => Bracket(false),
-                '{' => Brace(true),
-                '}' => Brace(false),
+            '(' => Paren(true),
+            ')' => Paren(false),
+            '[' => Bracket(true),
+            ']' => Bracket(false),
+            '{' => Brace(true),
+            '}' => Brace(false),
 
-                _ => Unassigned(c.to_string())
-            })
-        }
+            _ => Unassigned(c.to_string())
+        };
+
+        if *tokens.last().unwrap() == End && tkn == End { continue; }
+        tokens.push(tkn);
     }
 
     return tokens;

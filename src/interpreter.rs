@@ -68,6 +68,7 @@ pub struct Env {
 
 pub type Address = usize;
 pub type RuntimeValue = (TypeKind, Value);
+fn zero_value() -> RuntimeValue { (TypeKind::Integer, 0.into()) }
 
 impl Env {
     pub fn new() -> Self {
@@ -141,6 +142,7 @@ impl Env {
             BinaryExpr { left, right, op } => self.eval_binary(left, right, op),
             UnaryExpr { sign, value } => self.eval_unary(sign, value),
             FnCall { id, args } => self.eval_fn_call(id, args),
+            BlockExpr { body, is_fn } => self.eval_block(body, *is_fn),
             Void | FnIdent {..} | Csv {..} => todo!(),
         }
     }
@@ -174,11 +176,22 @@ impl Env {
             self.frame.declare(param, var);
         }
         let body = func.body;
-        //println!("{:#?}", self);
+        if unsafe { DEBUG } { println!("{:#?}", self); }
         let value = self.eval_node(&body);
         self.pop_frame();
 
         return value;
+    }
+
+    fn eval_block(&mut self, body: &Vec<AstNode>, is_fn: bool) -> RtResult<RuntimeValue> {
+        // for now, never create new frame
+        if !is_fn { return Err(FnUndefined("".into(), 0)); }
+        let mut value = zero_value();
+        for node in body {
+            value = self.eval_node(node)?;
+        }
+
+        return Ok(value);
     }
 
     fn eval_assignment(&mut self, left: &AstNode, right: &AstNode) -> RtResult<RuntimeValue> {
