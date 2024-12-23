@@ -14,12 +14,12 @@ Compeletely unfinished and probably never will be but it IS semi-functional.
 - Signed 64 bit integer(whole number) & floating point(decimal) data types, interchangeable
 - Unary expressions, ex: `-2, x = -1, +x`
 - Basic math operations `+, -, *, /`
+- Exponents `x^y`
 - Variables
 - Implicit multiplication, ex: `2x, 2(1 + 2)`
 - Basic functions, ex: `fn f(x, y) = x * y`, `f(2, 3)` ouputs: `6`
 
 **In Progress**
-- Exponents `x^y`
 - `let` keyword for solving for variables ex: `let -2x - 3 = 5x + 11` `x = -2`
 - Block expressions using `{}` allowing multi-expression functions, ex:
   ```

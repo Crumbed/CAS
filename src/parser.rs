@@ -46,6 +46,25 @@ impl Value {
             TypeKind::Float => (self.f / r.f).into(),
         }
     }
+    pub unsafe fn pow(self, pow: Value, ty: &TypeKind) -> Self {
+        match ty {
+            TypeKind::Integer => self.i.pow(pow.i as u32).into(),
+            TypeKind::Float => self.f.powf(pow.f).into(),
+        }
+    }
+
+    pub unsafe fn as_float(&mut self) {
+        self.f = self.i as f64;
+    }
+    pub unsafe fn as_int(&mut self) {
+        self.i = self.f as i64;
+    }
+    pub unsafe fn is_negative(&self, ty: &TypeKind) -> bool {
+        match ty {
+            TypeKind::Integer => self.i < 0,
+            TypeKind::Float => self.f < 0.,
+        }
+    }
 }
 
 impl From<f64> for Value {
@@ -191,12 +210,12 @@ impl Ast {
     }
 
     fn parse_mult(&mut self) -> AstNode {
-        let mut node = self.parse_unary();
+        let mut node = self.parse_exp();
 
         while self.has_next() && (self.snext_is("*") || self.snext_is("/") || self.snext_is("(") || self.next_is(Ident("".into()))) {
             if self.snext_is("(") || self.next_is(Ident("".into())) {
                 self.next();
-                let right = self.parse_unary();
+                let right = self.parse_exp();
 
                 node = AstNode::BinaryExpr {
                     left: Rc::new(node),
@@ -207,12 +226,30 @@ impl Ast {
             }
             let op = self.next().to_string();
             self.check_next("Expected a value");
-            let right = self.parse_unary();
+            let right = self.parse_exp();
 
             node = AstNode::BinaryExpr {
                 left: Rc::new(node),
                 right: Rc::new(right),
                 op
+            };
+        }
+
+        return node;
+    }
+
+    fn parse_exp(&mut self) -> AstNode {
+        let mut node = self.parse_unary();
+
+        while self.has_next() && self.snext_is("^") {
+            self.next();
+            self.check_next("Expected a value");
+            let pow = self.parse_unary();
+
+            node = AstNode::BinaryExpr {
+                left: Rc::new(node),
+                right: Rc::new(pow),
+                op: String::from("^")
             };
         }
 

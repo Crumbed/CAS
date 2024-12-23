@@ -3,7 +3,7 @@ use std::str::Chars;
 
 
 
-const ID_BREAK: [char; 22] = [
+const ID_BREAK: [char; 23] = [
     ' ',
     ',',
     '.',
@@ -25,6 +25,7 @@ const ID_BREAK: [char; 22] = [
     '*',
     '/',
     '\n', 
+    '^',
     ':'
 ];
 
@@ -127,7 +128,7 @@ pub fn tokenize(src: &str) -> Vec<Token> {
         match c {
             ' ' | '\n' | '\t' => continue,
             _ => tokens.push(match c {
-                '+' | '-' | '*' | '/' => BinaryOp(c.to_string()),
+                '+' | '-' | '*' | '/' | '^' => BinaryOp(c.to_string()),
 
                 '=' => Equals,
                 '!' => Bang,

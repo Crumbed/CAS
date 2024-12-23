@@ -286,12 +286,28 @@ impl Env {
         
         // if types are different, one is a float so the expression 
         // should be evaluated as a float
-        let t = if lt == rt { lt } else { 
-            match lt {
-                TypeKind::Integer => l.f = unsafe { l.i as f64 },
-                TypeKind::Float => r.f = unsafe { r.i as f64 },
+        let t = unsafe {
+            if lt == rt { 
+                match op {
+                    "^" if r.is_negative(&rt) && rt == TypeKind::Integer => {
+                        l.as_float();
+                        r.as_float();
+                        TypeKind::Float
+                    },
+                    "/" if lt == TypeKind::Integer => {
+                        l.as_float();
+                        r.as_float();
+                        TypeKind::Float
+                    },
+                    _ => lt
+                }
+            } else { 
+                match lt {
+                    TypeKind::Integer => l.as_float(),
+                    TypeKind::Float => r.as_float()
+                }
+                TypeKind::Float 
             }
-            TypeKind::Float 
         };
 
         let v = unsafe { 
@@ -300,6 +316,7 @@ impl Env {
                 "-" => l.sub(r, &t),
                 "*" => l.mul(r, &t),
                 "/" => l.div(r, &t),
+                "^" => l.pow(r, &t),
                 _ => { err!(fatal format!("Invalid binary expression operator: {}", op)); }
             }
         };
