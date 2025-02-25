@@ -1,7 +1,6 @@
 mod lexer;
 mod parser;
 mod interpreter;
-mod equation;
 mod err;
 
 use std::io;
