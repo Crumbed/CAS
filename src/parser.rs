@@ -1,5 +1,7 @@
 
 
+use std::collections::HashMap;
+use std::fmt::Display;
 use std::rc::Rc;
 use core::fmt::Debug;
 
@@ -9,10 +11,44 @@ use crate::err;
 use lexer::Token;
 
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum TypeKind {
     Integer,
     Float,
+    List(usize, Box<TypeKind>), // length of list
+    Struct(String), // name of struct
+}
+
+impl TypeKind {
+    pub fn is_num(&self) -> bool {
+        return match self {
+            TypeKind::Integer | TypeKind::Float => true,
+            _ => false,
+        };
+    }
+}
+
+impl Display for TypeKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            TypeKind::Integer => "Int".into(),
+            TypeKind::Float => "Float".into(),
+            TypeKind::List(size, t) => format!("{}[{}]", t, size),
+            TypeKind::Struct(name) => format!("Struct({})", name),
+        })
+    }
+}
+
+impl PartialEq for TypeKind {
+    fn eq(&self, other: &Self) -> bool {
+        return match (self, other) {
+            (TypeKind::Integer, TypeKind::Integer) => true,
+            (TypeKind::Float, TypeKind::Float) => true,
+            (TypeKind::List(s1, t1), TypeKind::List(s2, t2)) if s1 == s2 && t1 == t2 => true,
+            (TypeKind::Struct(n1), TypeKind::Struct(n2)) if n1 == n2 => true,
+            _ => false
+        };
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -26,30 +62,35 @@ impl Value {
         match ty {
             TypeKind::Integer => (self.i + r.i).into(),
             TypeKind::Float => (self.f + r.f).into(),
+            _ => self // cant add list or struct
         }
     }
     pub unsafe fn sub(self, r: Value, ty: &TypeKind) -> Self {
         match ty {
             TypeKind::Integer => (self.i - r.i).into(),
             TypeKind::Float => (self.f - r.f).into(),
+            _ => self // cant sub list or struct
         }
     }
     pub unsafe fn mul(self, r: Value, ty: &TypeKind) -> Self {
         match ty {
             TypeKind::Integer => (self.i * r.i).into(),
             TypeKind::Float => (self.f * r.f).into(),
+            _ => self // cant mul list or struct
         }
     }
     pub unsafe fn div(self, r: Value, ty: &TypeKind) -> Self {
         match ty {
             TypeKind::Integer => (self.i / r.i).into(),
             TypeKind::Float => (self.f / r.f).into(),
+            _ => self // cant div list or struct
         }
     }
     pub unsafe fn pow(self, pow: Value, ty: &TypeKind) -> Self {
         match ty {
             TypeKind::Integer => self.i.pow(pow.i as u32).into(),
             TypeKind::Float => self.f.powf(pow.f).into(),
+            _ => self // cant exp list or struct
         }
     }
 
@@ -63,6 +104,15 @@ impl Value {
         match ty {
             TypeKind::Integer => self.i < 0,
             TypeKind::Float => self.f < 0.,
+            _ => false // list or struct cant be negative
+        }
+    }
+
+    pub unsafe fn to_string(&self, ty: &TypeKind) -> String {
+        return match ty {
+            TypeKind::Integer => self.i.to_string(),
+            TypeKind::Float => self.f.to_string(),
+            _ => "undefined".into(),
         }
     }
 }
@@ -91,6 +141,7 @@ pub enum AstNode {
     Identifier { id: String },
     FnIdent { id: String, params: Rc<AstNode> },
     Literal { kind: TypeKind, data: Value },
+    ListLit { size: Rc<AstNode>, data: Vec<AstNode> },
     Csv { values: Vec<AstNode> },
 
     //SolveAssign {  },
@@ -128,7 +179,7 @@ impl Ast {
                 if !self.has_next() || !self.next_is(Equals) { return left; }
                 self.next();
                 self.check_next("Expected expression after =, but found nothing");
-                let mut assign = Rc::new(self.parse_add());
+                let mut assign = Rc::new(self.parse_block());
                 if let AstNode::BlockExpr { is_fn,.. } = Rc::get_mut(&mut assign).unwrap() {
                     *is_fn = true;
                 }
@@ -326,7 +377,7 @@ impl Ast {
             Int(x) => AstNode::Literal { kind: TypeKind::Integer, data: x.parse::<i64>().unwrap().into() },
             Ident(name) => AstNode::Identifier { id: name },
             Paren(true) => self.parse_paren(),
-            Brace(true) => self.parse_block(),
+            Brace(true) => self.parse_list(),
 
             End => { 
                 err!(fatal "Unexpected expression ending"); 
@@ -347,6 +398,7 @@ impl Ast {
     }
 
     fn parse_block(&mut self) -> AstNode {
+        if *self.at() != Brace(true) { return self.parse_add(); }
         if !self.has_next() { err!(fatal "Expected expression(s) or }, after {, but found nothing"); }
         let mut body = Vec::new();
         while self.has_next() && !self.snext_is("}") {
@@ -359,6 +411,36 @@ impl Ast {
         return AstNode::BlockExpr { 
             body,
             is_fn: false
+        };
+    }
+
+    fn parse_list(&mut self) -> AstNode {
+        if !self.has_next() { err!(fatal "Expected expression(s) or }, after {, but found nothing"); }
+        let at = self.next();
+        if *at == Brace(false) { // if list is empty, check for number after } indicating size
+            if !self.has_next() || (self.snext_is(";") || self.snext_is("\n")) {
+                err!(fatal "Can't have an empty array without a specified size, try {}size");
+            }
+
+            let size = self.parse_assign();
+            return AstNode::ListLit { 
+                size: size.into(),
+                data: Vec::with_capacity(0)
+            };
+        }
+        let data = self.parse_csv();
+        self.expect(Brace(false), "Unclosed array literal, expected }");
+        let (size, data) = match data {
+            AstNode::Csv { values } => (values.len(), values),
+            _ => (1, vec![data]),
+        };
+
+        return AstNode::ListLit {
+            size: AstNode::Literal {
+                kind: TypeKind::Integer,
+                data: (size as i64).into()
+            }.into(),
+            data
         };
     }
 }

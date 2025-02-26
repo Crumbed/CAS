@@ -10,7 +10,10 @@ pub enum RuntimeError {
     VarUndefined(String),
     FnUndefined(String, usize),
     InvalidFnDec(Vec<String>),
-    SolveFor(String)
+    SolveFor(String),
+    CannotOp(String),
+    InvalidVal(String),
+    InvalidType(String),
 }
 use RuntimeError as Rt;
 
@@ -23,6 +26,9 @@ impl fmt::Display for RuntimeError {
             Rt::InvalidFnDec(found) =>
                 format!("Invalid function signature! Expected identifiers but found {:?}", found),
             Rt::SolveFor(msg) => msg.to_string(),
+            Rt::CannotOp(msg) => msg.to_string(),
+            Rt::InvalidVal(msg) => format!("Invalid Value: {}", msg),
+            Rt::InvalidType(msg) => format!("Invalid Type: {}", msg),
         })
     }
 }

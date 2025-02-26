@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use crate::err;
 use crate::err::RtResult;
+use crate::err::RuntimeError;
 use crate::err::RuntimeError::*;
 use crate::parser;
 use crate::ENV;
@@ -25,6 +26,13 @@ pub struct Function {
     pub id: String,
     pub params: Vec<String>,
     pub body: AstNode
+}
+
+#[derive(Debug, Clone)]
+pub struct Struct {
+    pub id: String,
+    pub offsets: HashMap<String, usize>,
+    pub types: Vec<TypeKind>
 }
 
 #[derive(Debug, Clone)]
@@ -62,13 +70,30 @@ impl Frame {
 pub struct Env {
     mem: Vec<Value>,
     funcs: HashMap<(String, usize), Function>,
+    structs: HashMap<String, Struct>,
     frames: Vec<Frame>,
     frame: Frame
 }
 
 pub type Address = usize;
-pub type RuntimeValue = (TypeKind, Value);
-fn zero_value() -> RuntimeValue { (TypeKind::Integer, 0.into()) }
+#[derive(Debug, Clone)]
+pub enum RuntimeValue {
+    Word(TypeKind, Value),
+    Chunk(TypeKind, Box<[Value]>)
+}
+
+impl RuntimeValue {
+    pub fn get_type(&self) -> TypeKind {
+        match self {
+            RuntimeValue::Word(t, _) 
+            | RuntimeValue::Chunk(t, _) => t.clone()
+        }
+    }
+}
+
+fn word(t: TypeKind, v: Value) -> RuntimeValue { RuntimeValue::Word(t, v) }
+fn chunk(t: TypeKind, data: Box<[Value]>) -> RuntimeValue { RuntimeValue::Chunk(t, data) }
+fn zero_value() -> RuntimeValue { word(TypeKind::Integer, 0.into()) }
 
 impl Env {
     pub fn new() -> Self {
@@ -76,6 +101,7 @@ impl Env {
         Env {
             mem: Vec::with_capacity(100),
             funcs: HashMap::new(),
+            structs: HashMap::new(),
             frames: vec![],
             frame
         }
@@ -105,13 +131,31 @@ impl Env {
         };
     }
 
-    pub fn set(&mut self, adr: Address, data: Value) {
-        self.mem[adr] = data;
+    pub fn getc(&self, var: &Variable, size: usize) -> RtResult<Box<[Value]>> {
+        if var.ad + size > self.mem.len() { 
+            return Err(VarUndefined(var.id.clone()));
+        }
+        let val = &self.mem[var.ad..var.ad + size];
+        return Ok(val.into());
     }
 
+    pub fn set(&mut self, adr: Address, data: &[Value]) {
+        for (i, d) in data.iter().enumerate() {
+            self.mem[adr + i] = *d;
+        }
+    }
+
+    pub fn allocc(&mut self, data: &[Value]) -> Address {
+        let ad = self.mem.len();
+        for d in data {
+            self.mem.push(*d);
+        }
+        return ad;
+    }
     pub fn alloc(&mut self, data: Value) -> Address {
+        let ad = self.mem.len();
         self.mem.push(data);
-        return self.mem.len() - 1;
+        return ad;
     }
     pub fn free_to(&mut self, adr: Address) {
         while self.mem.len() != adr {
@@ -125,9 +169,10 @@ impl Env {
     pub fn eval_ast(&mut self, ast: Vec<AstNode>) -> RtResult<Vec<RuntimeValue>> {
         let mut results = Vec::with_capacity(ast.len());
         for node in ast {
-            let value = self.eval_node(&node)?;
+            let value = self.eval_node(&node);
+            //println!("{:#?}", value_err);
             if unsafe { ENV } { println!("{:#?}", self); }
-            results.push(value);
+            results.push(value?);
         }
 
         return Ok(results);
@@ -136,7 +181,8 @@ impl Env {
     fn eval_node(&mut self, node: &AstNode) -> RtResult<RuntimeValue> {
         match node {
             Identifier { id } => self.eval_ident(id),
-            Literal { kind, data } => ok(*kind, *data),
+            Literal { kind, data } => Ok(word(kind.clone(), *data)),
+            ListLit { size, data } => self.eval_list(size, data),
             VarAssign { id_expr, assign } => self.eval_assignment(id_expr, assign),
             BinaryExpr { left, right, op } => self.eval_binary(left, right, op),
             UnaryExpr { sign, value } => self.eval_unary(sign, value),
@@ -146,13 +192,53 @@ impl Env {
         }
     }
 
+    fn eval_list(&mut self, size: &AstNode, data: &Vec<AstNode>) -> RtResult<RuntimeValue> {
+        let len = self.eval_node(size)?;
+        let len = if let RuntimeValue::Word(t, mut v) = len { unsafe {
+            if t == TypeKind::Float { v.as_int(); }
+            v.i as usize
+        }} else { 
+            return Err(RuntimeError::InvalidVal(format!("expected int but found {}", len.get_type())));
+        };
+
+        let mut list = Vec::with_capacity(len);
+        let mut has_type = false;
+        let mut ty = TypeKind::Integer; // default type
+        for node in data {
+            let d = self.eval_node(node)?;
+            let typ;
+            match d {
+                RuntimeValue::Word(t, v) => {
+                    typ = t;
+                    list.push(v);
+                },
+                RuntimeValue::Chunk(t, c) => {
+                    typ = t;
+                    list.append(&mut c.into());
+                },
+            }
+
+            if !has_type {
+                ty = typ;
+                has_type = true;
+            } else if ty != typ {
+                return Err(RuntimeError::InvalidType(format!("expected {}, but found {}", ty, typ)));
+            }
+        }
+
+        return Ok(chunk(TypeKind::List(len, ty.into()), list.into()));
+    }
+
     fn eval_fn_call(&mut self, id: &str, args: &AstNode) -> RtResult<RuntimeValue> {
         let args = match args {
             Csv { values } => {
-                let mut err = ok(TypeKind::Integer, 0.into());
+                let mut err = Ok(zero_value());
                 let values = values.iter().map(|v| match self.eval_node(v) {
                     Ok(x) => x,
-                    Err(e) => { err = Err(e); (TypeKind::Integer, 0.into()) }
+                    Err(e) => { 
+                        err = Err(e);
+                        zero_value()
+                    }
                 }).collect();
                 _ = err?;
                 values
@@ -165,11 +251,13 @@ impl Env {
         }?;
         self.new_frame();
         for (arg, param) in args.iter().zip(func.params.iter()) {
-            let (t, v) = arg;
-            let ad = self.alloc(*v);
+            let ad = match arg {
+                RuntimeValue::Word(_, v) => self.alloc(*v),
+                RuntimeValue::Chunk(_, c) => self.allocc(c)
+            };
             let var = Variable {
                 id: param.to_string(),
-                ty: *t,
+                ty: arg.get_type(),
                 ad
             };
             self.frame.declare(param, var);
@@ -202,23 +290,30 @@ impl Env {
             todo!();
         };
 
-        let (t, v) = self.eval_node(right)?;
+        let data = self.eval_node(right)?;
+        //println!("{:#?}", data);
         match self.frame.get(id) {
-            Some(var) => {
-                self.set(var.ad, v);
+            Some(var) => match &data {
+                RuntimeValue::Word(_, v) => self.set(var.ad, &[*v]),
+                RuntimeValue::Chunk(_, c) => self.set(var.ad, c),
             },
             None => {
-                let ad = self.alloc(v);
+                let ty = data.get_type();
+                let ad = match &data {
+                    RuntimeValue::Word(_, v) => self.alloc(*v),
+                    RuntimeValue::Chunk(_, c) => self.allocc(c),
+                };
                 let var = Variable {
                     id: id.to_owned(),
-                    ty: t,
+                    ty,
                     ad
                 };
+                //println!("{:#?}", var);
                 self.frame.declare(id, var);
             }
         }
 
-        return ok(t, v);
+        return Ok(data);
     }
 
     fn eval_fn_dec(&mut self, id: &str, params: &AstNode, body: &AstNode) -> RtResult<RuntimeValue> {
@@ -234,9 +329,14 @@ impl Env {
                             match kind {
                                 TypeKind::Float => unsafe { data.f.to_string() }
                                 TypeKind::Integer => unsafe { data.i.to_string() }
+                                TypeKind::List(..) 
+                                | TypeKind::Struct(_) => format!("{}", kind)
                             }
                         },
-                        _ => "[Expression]".into()
+                        _ => {
+                            valid = false;
+                            "[Expression]".into()
+                        }
                     }
                 }).collect();
 
@@ -250,9 +350,10 @@ impl Env {
         let func = Function { id, params, body: body.clone() };
         self.funcs.insert((func.id.clone(), func.params.len()), func);
 
-        return ok(TypeKind::Integer, 0.into());
+        return Ok(zero_value());
     }
 
+    /*
     fn solve_for<'a>(&mut self, mut left: &'a AstNode, mut right: &'a AstNode, id: &str) -> RtResult<RuntimeValue> {
         let olvars = self.find_undec_vars(left);
         let orvars = self.find_undec_vars(right);
@@ -290,10 +391,17 @@ impl Env {
             _ => None
         }
     }
+    */
 
     fn eval_binary(&mut self, left: &AstNode, right: &AstNode, op: &str) -> RtResult<RuntimeValue> {
-        let (lt, mut l) = self.eval_node(left)?;
-        let (rt, mut r) = self.eval_node(right)?;
+        let l = self.eval_node(left)?;
+        let r = self.eval_node(right)?;
+        let (lt, mut l) = if let RuntimeValue::Word(t, v) = l { (t, v) } else {
+            return Err(RuntimeError::CannotOp(format!("Cannot perform {} on {}", op, l.get_type())));
+        };
+        let (rt, mut r) = if let RuntimeValue::Word(t, v) = r { (t, v) } else {
+            return Err(RuntimeError::CannotOp(format!("Cannot perform {} on {}", op, r.get_type())));
+        };
         
         // if types are different, one is a float so the expression 
         // should be evaluated as a float
@@ -315,7 +423,8 @@ impl Env {
             } else { 
                 match lt {
                     TypeKind::Integer => l.as_float(),
-                    TypeKind::Float => r.as_float()
+                    TypeKind::Float => r.as_float(),
+                    _ => (),
                 }
                 TypeKind::Float 
             }
@@ -332,28 +441,40 @@ impl Env {
             }
         };
 
-        return ok(t, v);
+        return Ok(word(t, v));
     }
 
     fn eval_unary(&mut self, sign: &str, expr: &AstNode) -> RtResult<RuntimeValue> {
-        let (t, v) = self.eval_node(expr)?;
-        return ok(t, match sign {
+        let data = self.eval_node(expr)?;
+        let (t, v) = if let RuntimeValue::Word(t, v) = data { (t, v) } else {
+            return Err(CannotOp(format!("Cannot perform unary {} on {}", sign, data.get_type()))); 
+        };
+
+        return Ok(word(t.clone(), match sign {
             "+" => match t {
                 TypeKind::Integer => unsafe { v.i.abs().into() },
-                TypeKind::Float => unsafe { v.f.abs().into() }
+                TypeKind::Float => unsafe { v.f.abs().into() },
+                _ => v // cant use unary on list or struct
             }, 
             "-" => match t {
                 TypeKind::Integer => unsafe { (-v.i).into() },
-                TypeKind::Float => unsafe { (-v.f).into() }
+                TypeKind::Float => unsafe { (-v.f).into() },
+                _ => v // cant use unary on list or struct
             },
             _ => v
-        });
+        }));
     }
 
     fn eval_ident(&mut self, ident: &str) -> RtResult<RuntimeValue> {
         let var = self.frame.vars.get(ident);
         return match var {
-            Some(x) => ok(x.ty, *self.get(x)?),
+            Some(x) => {
+                Ok(match &x.ty {
+                    TypeKind::Integer | TypeKind::Float => word(x.ty.clone(), *self.get(x)?),
+                    TypeKind::List(size, t) => chunk(*t.clone(), self.getc(x, *size)?),
+                    _ => zero_value(),
+                })
+            },
             None => Err(VarUndefined(ident.to_string()))
         }
     }
@@ -361,10 +482,6 @@ impl Env {
 
 
 
-
-pub fn ok(t: TypeKind, v: Value) -> RtResult<RuntimeValue> {
-    Ok((t, v))
-}
 
 
 

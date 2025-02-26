@@ -98,10 +98,19 @@ fn main() -> io::Result<()> {
 
 
 unsafe fn print_results(results: &Vec<RuntimeValue>) {
-    for (t, v) in results {
-        match t {
-            TypeKind::Integer => println!("Result: {}", v.i),
-            TypeKind::Float => println!("Result: {}", v.f)
+    for data in results {
+        let t = data.get_type();
+        match data {
+            RuntimeValue::Word(_, v) => println!("Result: {}", v.to_string(&t)),
+            RuntimeValue::Chunk(t, c) => {
+                let t = if let TypeKind::List(_, ty) = t { ty } else { t };
+                print!("Result: {{ ");
+                for (i, v) in c.iter().enumerate() {
+                    if i > 0 { print!(", "); }
+                    print!("{}", v.to_string(t));
+                }
+                println!(" }}");
+            }
         }
     }
 }
